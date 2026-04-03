@@ -1,0 +1,23 @@
+[Unit]
+Description=Streambox Spotify Connect Receiver
+Wants=network-online.target avahi-daemon.service
+After=network-online.target avahi-daemon.service sound.target
+
+[Service]
+Type=simple
+User=streambox
+Group=audio
+WorkingDirectory=/opt/streambox-spotify
+Environment=HOME=/home/streambox
+Environment=JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
+ExecStart=/usr/bin/java -jar /opt/streambox-spotify/librespot-player.jar --conf-file=/etc/streambox-spotify/config.toml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+PrivateTmp=true
+ReadWritePaths=/var/cache/streambox-spotify /opt/streambox-spotify
+
+[Install]
+WantedBy=multi-user.target

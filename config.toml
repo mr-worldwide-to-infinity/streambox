@@ -1,0 +1,44 @@
+# Voorbeeldconfig voor /etc/streambox-spotify/config.toml
+
+deviceName = "streambox"
+deviceType = "SPEAKER"
+preferredLocale = "nl"
+logLevel = "INFO"
+
+[auth]
+strategy = "ZEROCONF"
+storeCredentials = true
+credentialsFile = "/var/cache/streambox-spotify/credentials.json"
+
+[zeroconf]
+listenPort = -1
+listenAll = true
+interfaces = "wlan0"
+
+[cache]
+enabled = true
+dir = "/var/cache/streambox-spotify"
+doCleanUp = true
+
+[preload]
+enabled = true
+
+[time]
+synchronizationMethod = "NTP"
+manualCorrection = 0
+
+[player]
+autoplayEnabled = true
+preferredAudioQuality = "HIGH"
+enableNormalisation = true
+normalisationPregain = 0.0
+initialVolume = 49152
+volumeSteps = 64
+logAvailableMixers = true
+mixerSearchKeywords = "Headphone;PCM;Master"
+crossfadeDuration = 0
+output = "MIXER"
+releaseLineDelay = 20
+pipe = ""
+retryOnChunkError = true
+metadataPipe = ""
