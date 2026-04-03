@@ -34,6 +34,12 @@ check_user_exists() {
   fi
 }
 
+remove_broken_spocon_repo() {
+  log "Oude SpoCon repo verwijderen..."
+  rm -f /etc/apt/sources.list.d/spocon.list
+  apt-get update
+}
+
 install_packages() {
   log "Benodigde pakketten installeren..."
   apt-get update
@@ -56,12 +62,6 @@ fix_hostname() {
   fi
 
   hostname "${HOSTNAME_TARGET}" || true
-}
-
-remove_broken_spocon_repo() {
-  log "Oude SpoCon repo verwijderen..."
-  rm -f /etc/apt/sources.list.d/spocon.list
-  apt-get update
 }
 
 create_dirs() {
@@ -126,7 +126,7 @@ User=${APP_USER}
 Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
 Environment=HOME=/home/${APP_USER}
-ExecStart=/usr/bin/java -jar ${JAR_FILE} --conf-file ${CONFIG_FILE}
+ExecStart=/usr/bin/java -jar ${JAR_FILE} --conf-file=${CONFIG_FILE}
 Restart=always
 RestartSec=5
 
@@ -160,9 +160,9 @@ show_status() {
 main() {
   require_root
   check_user_exists
+  remove_broken_spocon_repo
   install_packages
   fix_hostname
-  remove_broken_spocon_repo
   create_dirs
   download_librespot
   write_config
