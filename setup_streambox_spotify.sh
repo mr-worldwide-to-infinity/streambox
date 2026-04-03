@@ -6,6 +6,7 @@ HOSTNAME_TARGET="streambox"
 
 APP_DIR="/opt/streambox-spotify"
 CONFIG_FILE="${APP_DIR}/config.toml"
+CACHE_DIR="${APP_DIR}/cache"
 JAR_FILE="${APP_DIR}/librespot-player.jar"
 SERVICE_FILE="/etc/systemd/system/streambox-spotify.service"
 
@@ -66,7 +67,9 @@ fix_hostname() {
 create_dirs() {
   log "Mappen aanmaken..."
   mkdir -p "${APP_DIR}"
+  mkdir -p "${CACHE_DIR}"
   chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+  chmod 755 "${APP_DIR}"
 }
 
 download_librespot() {
@@ -88,17 +91,39 @@ write_config() {
 deviceName = "streambox"
 deviceType = "SPEAKER"
 preferredLocale = "nl"
-logLevel = "INFO"
 
 [auth]
 strategy = "ZEROCONF"
 
+[zeroconf]
+listenPort = -1
+listenAll = true
+interfaces = ""
+
+[cache]
+enabled = true
+dir = "/opt/streambox-spotify/cache"
+doCleanUp = true
+
+[preload]
+enabled = true
+
+[time]
+synchronizationMethod = "NTP"
+manualCorrection = 0
+
 [player]
-output = "ALSA"
-initialVolume = 70
-volumeSteps = 64
-preferredAudioQuality = "NORMAL"
 autoplayEnabled = true
+preferredAudioQuality = "VORBIS_160"
+enableNormalisation = true
+normalisationPregain = 0.0
+initialVolume = 45000
+logAvailableMixers = true
+mixerSearchKeywords = ""
+crossfadeDuration = 0
+output = "MIXER"
+releaseLineDelay = 20
+pipe = ""
 EOF
 
   chown "${APP_USER}:${APP_USER}" "${CONFIG_FILE}"
@@ -145,6 +170,9 @@ show_status() {
   echo "Controleer met:"
   echo "  systemctl status streambox-spotify.service --no-pager"
   echo "  journalctl -u streambox-spotify.service -n 100 --no-pager"
+  echo
+  echo "Live log bekijken tijdens verbinden:"
+  echo "  journalctl -u streambox-spotify.service -f --no-pager"
   echo
   echo "Herstart daarna de Pi:"
   echo "  sudo reboot"
