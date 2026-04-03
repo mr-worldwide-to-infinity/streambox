@@ -9,6 +9,8 @@ CONFIG_FILE="${APP_DIR}/config.toml"
 CACHE_DIR="${APP_DIR}/cache"
 JAR_FILE="${APP_DIR}/librespot-player.jar"
 SERVICE_FILE="/etc/systemd/system/streambox-spotify.service"
+ASOUND_FILE="/etc/asound.conf"
+PMDOWN_FILE="/etc/modprobe.d/snd_soc_core.conf"
 
 LIBRESPOT_URL="https://github.com/librespot-org/librespot-java/releases/download/v1.6.5/librespot-player-1.6.5.jar"
 
@@ -31,6 +33,45 @@ check_user_exists() {
   if ! id "${APP_USER}" >/dev/null 2>&1; then
     err "Gebruiker '${APP_USER}' bestaat niet."
     exit 1
+  fi
+}
+
+detect_boot_config() {
+  if [[ -f /boot/firmware/config.txt ]]; then
+    BOOT_CONFIG="/boot/firmware/config.txt"
+  elif [[ -f /boot/config.txt ]]; then
+    BOOT_CONFIG="/boot/config.txt"
+  else
+    err "Kon geen boot config bestand vinden."
+    exit 1
+  fi
+}
+
+set_config_key() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+
+  if grep -Eq "^[#[:space:]]*${key}=" "$file"; then
+    sed -i -E "s|^[#[:space:]]*${key}=.*|${key}=${value}|" "$file"
+  else
+    echo "${key}=${value}" >> "$file"
+  fi
+}
+
+configure_i2s_dac() {
+  detect_boot_config
+  log "I2S DAC configureren in ${BOOT_CONFIG}..."
+
+  cp "${BOOT_CONFIG}" "${BOOT_CONFIG}.bak.$(date +%Y%m%d%H%M%S)"
+
+  set_config_key "dtparam=i2s" "on" "${BOOT_CONFIG}"
+  set_config_key "dtparam=audio" "off" "${BOOT_CONFIG}"
+
+  if grep -Eq '^[#[:space:]]*dtoverlay=hifiberry-dac([[:space:]]|$)' "${BOOT_CONFIG}"; then
+    sed -i -E 's|^[#[:space:]]*dtoverlay=hifiberry-dac.*|dtoverlay=hifiberry-dac|' "${BOOT_CONFIG}"
+  else
+    echo "dtoverlay=hifiberry-dac" >> "${BOOT_CONFIG}"
   fi
 }
 
@@ -62,54 +103,6 @@ fix_hostname() {
   fi
 
   hostname "${HOSTNAME_TARGET}" || true
-}
-
-detect_boot_config() {
-  if [[ -f /boot/firmware/config.txt ]]; then
-    BOOT_CONFIG="/boot/firmware/config.txt"
-  elif [[ -f /boot/config.txt ]]; then
-    BOOT_CONFIG="/boot/config.txt"
-  else
-    err "Kon geen boot config bestand vinden."
-    exit 1
-  fi
-}
-
-set_config_key() {
-  local key="$1"
-  local value="$2"
-  local file="$3"
-
-  if grep -Eq "^[#[:space:]]*${key}=" "$file"; then
-    sed -i -E "s|^[#[:space:]]*${key}=.*|${key}=${value}|" "$file"
-  else
-    echo "${key}=${value}" >> "$file"
-  fi
-}
-
-ensure_line_present_once() {
-  local line="$1"
-  local file="$2"
-
-  if ! grep -Fxq "$line" "$file"; then
-    echo "$line" >> "$file"
-  fi
-}
-
-configure_i2s_dac() {
-  detect_boot_config
-  log "I2S DAC configureren in ${BOOT_CONFIG}..."
-
-  cp "${BOOT_CONFIG}" "${BOOT_CONFIG}.bak.$(date +%Y%m%d%H%M%S)"
-
-  set_config_key "dtparam=i2s" "on" "${BOOT_CONFIG}"
-  set_config_key "dtparam=audio" "off" "${BOOT_CONFIG}"
-
-  if grep -Eq '^[#[:space:]]*dtoverlay=hifiberry-dac([[:space:]]|$)' "${BOOT_CONFIG}"; then
-    sed -i -E 's|^[#[:space:]]*dtoverlay=hifiberry-dac.*|dtoverlay=hifiberry-dac|' "${BOOT_CONFIG}"
-  else
-    echo "dtoverlay=hifiberry-dac" >> "${BOOT_CONFIG}"
-  fi
 }
 
 create_dirs() {
@@ -165,17 +158,43 @@ autoplayEnabled = true
 preferredAudioQuality = "VORBIS_160"
 enableNormalisation = true
 normalisationPregain = 0.0
-initialVolume = 45000
+initialVolume = 30000
 logAvailableMixers = true
 mixerSearchKeywords = ""
 crossfadeDuration = 0
 output = "MIXER"
-releaseLineDelay = 20
+releaseLineDelay = 500
 pipe = ""
 EOF
 
   chown "${APP_USER}:${APP_USER}" "${CONFIG_FILE}"
   chmod 664 "${CONFIG_FILE}"
+}
+
+write_asound_conf() {
+  log "ALSA default op DAC zetten..."
+  cat > "${ASOUND_FILE}" <<'EOF'
+pcm.!default {
+    type plug
+    slave.pcm "hw:0,0"
+}
+
+ctl.!default {
+    type hw
+    card 0
+}
+EOF
+
+  chmod 644 "${ASOUND_FILE}"
+}
+
+disable_audio_powerdown_pop() {
+  log "Audio power-down plop mitigatie instellen..."
+  cat > "${PMDOWN_FILE}" <<'EOF'
+options snd_soc_core pmdown_time=-1
+EOF
+
+  chmod 644 "${PMDOWN_FILE}"
 }
 
 write_service() {
@@ -215,15 +234,13 @@ enable_service() {
 show_status() {
   echo
   log "Klaar."
-  echo "Controleer met:"
+  echo "Controleer na reboot met:"
+  echo "  aplay -l"
+  echo "  cat /proc/asound/cards"
   echo "  systemctl status streambox-spotify.service --no-pager"
   echo "  journalctl -u streambox-spotify.service -n 100 --no-pager"
   echo
-  echo "Na reboot ook controleren of de DAC zichtbaar is:"
-  echo "  aplay -l"
-  echo "  cat /proc/asound/cards"
-  echo
-  echo "Herstart daarna de Pi:"
+  echo "Herstart nu de Pi:"
   echo "  sudo reboot"
 }
 
@@ -237,6 +254,8 @@ main() {
   create_dirs
   download_librespot
   write_config
+  write_asound_conf
+  disable_audio_powerdown_pop
   write_service
   enable_service
   show_status
