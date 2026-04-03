@@ -3,15 +3,8 @@ set -euo pipefail
 
 APP_USER="streambox"
 HOSTNAME_TARGET="streambox"
-APP_DIR="/opt/streambox-spotify"
-CONFIG_DIR="/etc/streambox-spotify"
-SERVICE_NAME="streambox-spotify.service"
-BIN_PATH="/usr/local/bin/librespot-player"
-SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
-CONFIG_PATH="${CONFIG_DIR}/config.toml"
-
-LIBRESPOT_URL="https://github.com/librespot-org/librespot-java/releases/download/v1.6.3/librespot-player-1.6.3_linux_armhf.deb"
-TMP_DEB="/tmp/librespot-player.deb"
+SPOCON_CONFIG="/opt/spocon/config.toml"
+SPOCON_SERVICE="spocon.service"
 
 log() {
   echo "[INFO] $*"
@@ -35,13 +28,12 @@ check_user_exists() {
   fi
 }
 
-install_packages() {
-  log "Pakketten installeren..."
+install_base_packages() {
+  log "Basispakketten installeren..."
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
-    openjdk-17-jre-headless \
     avahi-daemon \
     alsa-utils
 }
@@ -59,71 +51,45 @@ set_hostname_if_needed() {
   hostname "${HOSTNAME_TARGET}" || true
 }
 
-download_and_install_librespot() {
-  log "librespot-player downloaden..."
-  rm -f "${TMP_DEB}"
-  curl -L "${LIBRESPOT_URL}" -o "${TMP_DEB}"
-
-  log "librespot-player installeren..."
-  dpkg -i "${TMP_DEB}" || apt-get install -f -y
-
-  if [[ ! -f "/usr/bin/librespot-player" ]]; then
-    err "librespot-player niet gevonden na installatie."
-    exit 1
-  fi
-
-  cp /usr/bin/librespot-player "${BIN_PATH}"
-  chmod 755 "${BIN_PATH}"
+install_spocon() {
+  log "SpoCon installeren via officiële installer..."
+  curl -sL https://spocon.github.io/spocon/install.sh | sh
 }
 
-create_directories() {
-  log "Mappen aanmaken..."
-  mkdir -p "${APP_DIR}"
-  mkdir -p "${CONFIG_DIR}"
-  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
-}
+write_spocon_config() {
+  log "SpoCon config schrijven..."
 
-write_config() {
-  log "Config schrijven naar ${CONFIG_PATH}..."
-  cat > "${CONFIG_PATH}" <<EOF
+  mkdir -p /opt/spocon
+
+  cat > "${SPOCON_CONFIG}" <<'EOF'
 deviceName = "streambox"
 deviceType = "SPEAKER"
-audioOutput = "ALSA"
-audioDevice = "default"
+preferredLocale = "nl"
+
+[audio]
+output = "ALSA"
+backend = "STDOUT"
+alsaDevice = "default"
 mixer = "software"
 initialVolume = 70
-bitrate = 160
 volumeSteps = 64
-zeroconfEnabled = true
+bitrate = 160
+
+[auth]
+strategy = "ZEROCONF"
+
+[zeroconf]
+enabled = true
+listenAll = true
 EOF
 
-  chmod 644 "${CONFIG_PATH}"
+  chmod 644 "${SPOCON_CONFIG}"
 }
 
-write_service() {
-  log "systemd service schrijven..."
-  cat > "${SERVICE_PATH}" <<EOF
-[Unit]
-Description=Streambox Spotify Connect
-After=network-online.target sound.target avahi-daemon.service
-Wants=network-online.target avahi-daemon.service
-
-[Service]
-Type=simple
-User=${APP_USER}
-Group=${APP_USER}
-ExecStart=${BIN_PATH} --conf-file ${CONFIG_PATH}
-Restart=always
-RestartSec=5
-WorkingDirectory=${APP_DIR}
-Environment=HOME=/home/${APP_USER}
-Environment=USER=${APP_USER}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  chmod 644 "${SERVICE_PATH}"
+fix_permissions() {
+  if id spocon >/dev/null 2>&1; then
+    chown -R spocon:spocon /opt/spocon || true
+  fi
 }
 
 enable_services() {
@@ -131,34 +97,31 @@ enable_services() {
   systemctl daemon-reload
   systemctl enable avahi-daemon
   systemctl restart avahi-daemon
-  systemctl enable "${SERVICE_NAME}"
-  systemctl restart "${SERVICE_NAME}"
+  systemctl enable "${SPOCON_SERVICE}"
+  systemctl restart "${SPOCON_SERVICE}"
 }
 
 show_status() {
   echo
   log "Klaar."
-  echo "Controleer status met:"
-  echo "  systemctl status ${SERVICE_NAME}"
   echo
-  echo "Na een reboot zou Spotify Connect apparaat 'streambox' zichtbaar moeten zijn op je telefoon."
-  echo
-  echo "Handige checks:"
+  echo "Controleer:"
+  echo "  systemctl status ${SPOCON_SERVICE} --no-pager"
+  echo "  journalctl -u ${SPOCON_SERVICE} -n 100 --no-pager"
   echo "  hostname"
-  echo "  cat /etc/hostname"
   echo "  grep 127.0.1.1 /etc/hosts"
-  echo "  journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
+  echo
+  echo "Na reboot moet Spotify Connect apparaat 'streambox' zichtbaar zijn op je telefoon."
 }
 
 main() {
   require_root
   check_user_exists
-  install_packages
+  install_base_packages
   set_hostname_if_needed
-  download_and_install_librespot
-  create_directories
-  write_config
-  write_service
+  install_spocon
+  write_spocon_config
+  fix_permissions
   enable_services
   show_status
 }
