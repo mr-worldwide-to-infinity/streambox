@@ -64,6 +64,54 @@ fix_hostname() {
   hostname "${HOSTNAME_TARGET}" || true
 }
 
+detect_boot_config() {
+  if [[ -f /boot/firmware/config.txt ]]; then
+    BOOT_CONFIG="/boot/firmware/config.txt"
+  elif [[ -f /boot/config.txt ]]; then
+    BOOT_CONFIG="/boot/config.txt"
+  else
+    err "Kon geen boot config bestand vinden."
+    exit 1
+  fi
+}
+
+set_config_key() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+
+  if grep -Eq "^[#[:space:]]*${key}=" "$file"; then
+    sed -i -E "s|^[#[:space:]]*${key}=.*|${key}=${value}|" "$file"
+  else
+    echo "${key}=${value}" >> "$file"
+  fi
+}
+
+ensure_line_present_once() {
+  local line="$1"
+  local file="$2"
+
+  if ! grep -Fxq "$line" "$file"; then
+    echo "$line" >> "$file"
+  fi
+}
+
+configure_i2s_dac() {
+  detect_boot_config
+  log "I2S DAC configureren in ${BOOT_CONFIG}..."
+
+  cp "${BOOT_CONFIG}" "${BOOT_CONFIG}.bak.$(date +%Y%m%d%H%M%S)"
+
+  set_config_key "dtparam=i2s" "on" "${BOOT_CONFIG}"
+  set_config_key "dtparam=audio" "off" "${BOOT_CONFIG}"
+
+  if grep -Eq '^[#[:space:]]*dtoverlay=hifiberry-dac([[:space:]]|$)' "${BOOT_CONFIG}"; then
+    sed -i -E 's|^[#[:space:]]*dtoverlay=hifiberry-dac.*|dtoverlay=hifiberry-dac|' "${BOOT_CONFIG}"
+  else
+    echo "dtoverlay=hifiberry-dac" >> "${BOOT_CONFIG}"
+  fi
+}
+
 create_dirs() {
   log "Mappen aanmaken..."
   mkdir -p "${APP_DIR}"
@@ -171,8 +219,9 @@ show_status() {
   echo "  systemctl status streambox-spotify.service --no-pager"
   echo "  journalctl -u streambox-spotify.service -n 100 --no-pager"
   echo
-  echo "Live log bekijken tijdens verbinden:"
-  echo "  journalctl -u streambox-spotify.service -f --no-pager"
+  echo "Na reboot ook controleren of de DAC zichtbaar is:"
+  echo "  aplay -l"
+  echo "  cat /proc/asound/cards"
   echo
   echo "Herstart daarna de Pi:"
   echo "  sudo reboot"
@@ -184,6 +233,7 @@ main() {
   remove_broken_spocon_repo
   install_packages
   fix_hostname
+  configure_i2s_dac
   create_dirs
   download_librespot
   write_config
