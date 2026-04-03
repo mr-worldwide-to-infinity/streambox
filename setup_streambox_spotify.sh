@@ -3,8 +3,14 @@ set -euo pipefail
 
 APP_USER="streambox"
 HOSTNAME_TARGET="streambox"
-SPOCON_CONFIG="/opt/spocon/config.toml"
-SPOCON_SERVICE="spocon.service"
+
+APP_DIR="/opt/streambox-spotify"
+CONFIG_DIR="/etc/streambox-spotify"
+CONFIG_FILE="${CONFIG_DIR}/config.toml"
+JAR_FILE="${APP_DIR}/librespot-player.jar"
+SERVICE_FILE="/etc/systemd/system/streambox-spotify.service"
+
+LIBRESPOT_URL="https://github.com/librespot-org/librespot-java/releases/download/v1.6.5/librespot-player-1.6.5.jar"
 
 log() {
   echo "[INFO] $*"
@@ -23,22 +29,23 @@ require_root() {
 
 check_user_exists() {
   if ! id "${APP_USER}" >/dev/null 2>&1; then
-    err "Gebruiker '${APP_USER}' bestaat niet. Maak deze eerst aan."
+    err "Gebruiker '${APP_USER}' bestaat niet."
     exit 1
   fi
 }
 
-install_base_packages() {
-  log "Basispakketten installeren..."
+install_packages() {
+  log "Benodigde pakketten installeren..."
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
+    openjdk-17-jre-headless \
     avahi-daemon \
     alsa-utils
 }
 
-set_hostname_if_needed() {
+fix_hostname() {
   log "Hostname instellen op ${HOSTNAME_TARGET}..."
   echo "${HOSTNAME_TARGET}" > /etc/hostname
 
@@ -51,78 +58,116 @@ set_hostname_if_needed() {
   hostname "${HOSTNAME_TARGET}" || true
 }
 
-install_spocon() {
-  log "SpoCon installeren via officiële installer..."
-  curl -sL https://spocon.github.io/spocon/install.sh | sh
+remove_broken_spocon_repo() {
+  log "Oude SpoCon repo verwijderen..."
+  rm -f /etc/apt/sources.list.d/spocon.list
+  apt-get update
 }
 
-write_spocon_config() {
-  log "SpoCon config schrijven..."
+create_dirs() {
+  log "Mappen aanmaken..."
+  mkdir -p "${APP_DIR}"
+  mkdir -p "${CONFIG_DIR}"
+  chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+}
 
-  mkdir -p /opt/spocon
+download_librespot() {
+  log "librespot-player downloaden..."
+  curl -L "${LIBRESPOT_URL}" -o "${JAR_FILE}"
 
-  cat > "${SPOCON_CONFIG}" <<'EOF'
+  if [[ ! -s "${JAR_FILE}" ]]; then
+    err "Download van librespot-player mislukt."
+    exit 1
+  fi
+
+  chown "${APP_USER}:${APP_USER}" "${JAR_FILE}"
+  chmod 644 "${JAR_FILE}"
+}
+
+write_config() {
+  log "Config schrijven..."
+  cat > "${CONFIG_FILE}" <<'EOF'
 deviceName = "streambox"
 deviceType = "SPEAKER"
 preferredLocale = "nl"
+logLevel = "INFO"
+
+[auth]
+strategy = "ZEROCONF"
 
 [audio]
 output = "ALSA"
-backend = "STDOUT"
+backend = "ALSA"
 alsaDevice = "default"
 mixer = "software"
 initialVolume = 70
 volumeSteps = 64
 bitrate = 160
 
-[auth]
-strategy = "ZEROCONF"
-
 [zeroconf]
 enabled = true
 listenAll = true
 EOF
 
-  chmod 644 "${SPOCON_CONFIG}"
+  chmod 644 "${CONFIG_FILE}"
 }
 
-fix_permissions() {
-  if id spocon >/dev/null 2>&1; then
-    chown -R spocon:spocon /opt/spocon || true
-  fi
+write_service() {
+  log "systemd service schrijven..."
+  cat > "${SERVICE_FILE}" <<EOF
+[Unit]
+Description=Streambox Spotify Connect
+After=network-online.target avahi-daemon.service sound.target
+Wants=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=${APP_USER}
+Group=${APP_USER}
+WorkingDirectory=${APP_DIR}
+Environment=HOME=/home/${APP_USER}
+ExecStart=/usr/bin/java -jar ${JAR_FILE} --conf-file ${CONFIG_FILE}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  chmod 644 "${SERVICE_FILE}"
 }
 
-enable_services() {
+enable_service() {
   log "Services activeren..."
   systemctl daemon-reload
   systemctl enable avahi-daemon
   systemctl restart avahi-daemon
-  systemctl enable "${SPOCON_SERVICE}"
-  systemctl restart "${SPOCON_SERVICE}"
+  systemctl enable streambox-spotify.service
+  systemctl restart streambox-spotify.service
 }
 
 show_status() {
   echo
   log "Klaar."
+  echo "Controleer met:"
+  echo "  systemctl status streambox-spotify.service --no-pager"
+  echo "  journalctl -u streambox-spotify.service -n 100 --no-pager"
   echo
-  echo "Controleer:"
-  echo "  systemctl status ${SPOCON_SERVICE} --no-pager"
-  echo "  journalctl -u ${SPOCON_SERVICE} -n 100 --no-pager"
-  echo "  hostname"
-  echo "  grep 127.0.1.1 /etc/hosts"
-  echo
-  echo "Na reboot moet Spotify Connect apparaat 'streambox' zichtbaar zijn op je telefoon."
+  echo "Herstart daarna de Pi:"
+  echo "  sudo reboot"
 }
 
 main() {
   require_root
   check_user_exists
-  install_base_packages
-  set_hostname_if_needed
-  install_spocon
-  write_spocon_config
-  fix_permissions
-  enable_services
+  install_packages
+  fix_hostname
+  remove_broken_spocon_repo
+  create_dirs
+  download_librespot
+  write_config
+  write_service
+  enable_service
   show_status
 }
 
