@@ -5,8 +5,7 @@ APP_USER="streambox"
 HOSTNAME_TARGET="streambox"
 
 APP_DIR="/opt/streambox-spotify"
-CONFIG_DIR="/etc/streambox-spotify"
-CONFIG_FILE="${CONFIG_DIR}/config.toml"
+CONFIG_FILE="${APP_DIR}/config.toml"
 JAR_FILE="${APP_DIR}/librespot-player.jar"
 SERVICE_FILE="/etc/systemd/system/streambox-spotify.service"
 
@@ -67,7 +66,6 @@ fix_hostname() {
 create_dirs() {
   log "Mappen aanmaken..."
   mkdir -p "${APP_DIR}"
-  mkdir -p "${CONFIG_DIR}"
   chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 }
 
@@ -95,21 +93,16 @@ logLevel = "INFO"
 [auth]
 strategy = "ZEROCONF"
 
-[audio]
+[player]
 output = "ALSA"
-backend = "ALSA"
-alsaDevice = "default"
-mixer = "software"
 initialVolume = 70
 volumeSteps = 64
-bitrate = 160
-
-[zeroconf]
-enabled = true
-listenAll = true
+preferredAudioQuality = "NORMAL"
+autoplayEnabled = true
 EOF
 
-  chmod 644 "${CONFIG_FILE}"
+  chown "${APP_USER}:${APP_USER}" "${CONFIG_FILE}"
+  chmod 664 "${CONFIG_FILE}"
 }
 
 write_service() {
